@@ -6,11 +6,11 @@ import { supabase } from './supabaseClient'
 const scanLineAnimation = `
   @keyframes scan {
     0% { transform: translateY(0); }
-    50% { transform: translateY(240px); }
+    50% { transform: translateY(200px); }
     100% { transform: translateY(0); }
   }
   .animate-scan {
-    animation: scan 2s ease-in-out infinite;
+    animation: scan 1.5s ease-in-out infinite;
   }
 `
 
@@ -515,30 +515,69 @@ function App() {
   }, [])
 
   const videoRef = useRef(null)
-  const html5QrCodeRef = useRef(null)
+  const codeReaderRef = useRef(null)
+  const scriptLoadedRef = useRef(false)
 
   useEffect(() => {
+    // Load ZXing library from CDN
+    if (!scriptLoadedRef.current) {
+      const script = document.createElement('script')
+      script.src = 'https://unpkg.com/@zxing/library@latest'
+      script.onload = () => {
+        scriptLoadedRef.current = true
+      }
+      document.body.appendChild(script)
+    }
+
     let stream = null
-    let intervalId = null
+    let animationFrameId = null
 
     const startScanning = async () => {
       if (!showCameraScanner) return
 
       try {
-        // Use html5-qrcode if available (from CDN)
-        if (window.Html5QrcodeScanner || window.Html5Qrcode) {
-          const Html5Qrcode = window.Html5Qrcode
-          html5QrCodeRef.current = new Html5Qrcode(videoRef.current, {
-            fps: 10,
-            qrbox: { width: 250, height: 250 },
-            aspectRatio: 1.0
-          })
+        // Wait for ZXing library to load
+        while (!window.ZXing && !window.BrowserMultiFormatReader) {
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
+
+        const BrowserMultiFormatReader = window.BrowserMultiFormatReader || (window.ZXing && window.ZXing.BrowserMultiFormatReader)
+        if (!BrowserMultiFormatReader) {
+          alert('Barcode scanner library failed to load!')
+          setShowCameraScanner(false)
+          return
+        }
+
+        // Initialize ZXing reader
+        codeReaderRef.current = new BrowserMultiFormatReader()
+        
+        // Start camera
+        stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
+        })
+        
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+          videoRef.current.play()
           
-          await html5QrCodeRef.current.start(
-            { facingMode: "environment" },
-            { fps: 10, qrbox: { width: 250, height: 250 } },
-            (decodedText) => {
-              const barcodeText = decodedText.trim().toLowerCase()
+          // Wait for video to be ready
+          await new Promise(resolve => {
+            if (videoRef.current && videoRef.current.readyState >= 2) {
+              resolve()
+            } else {
+              videoRef.current?.addEventListener('loadedmetadata', resolve, { once: true })
+            }
+          })
+        }
+
+        // Start continuous scanning
+        const scan = async () => {
+          if (!showCameraScanner || !videoRef.current) return
+          
+          try {
+            const result = await codeReaderRef.current.decodeFromVideoElement(videoRef.current)
+            if (result) {
+              const barcodeText = result.text.trim().toLowerCase()
               const product = data.find(row => 
                 String(row['BARCODE'] || '').trim().toLowerCase() === barcodeText
               )
@@ -546,74 +585,29 @@ function App() {
                 setScannedCart(prev => [...prev, { id: Date.now() + Math.random(), product }])
               }
               setShowCameraScanner(false)
-              html5QrCodeRef.current?.stop()
-            },
-            (errorMessage) => {
-              // Ignore scan errors
+              return
             }
-          )
-          return
+          } catch (err) {
+            // Ignore continuous scan errors
+          }
+          
+          animationFrameId = requestAnimationFrame(scan)
         }
         
-        // Fallback to native BarcodeDetector
-        stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } 
-        })
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream
-          videoRef.current.play()
-        }
-
-        // Wait for video to be ready
-        await new Promise(resolve => {
-          if (videoRef.current && videoRef.current.readyState >= 2) {
-            resolve()
-          } else {
-            videoRef.current?.addEventListener('loadedmetadata', resolve, { once: true })
-          }
-        })
-
-        // Check if BarcodeDetector is supported
-        if ('BarcodeDetector' in window) {
-          const detector = new BarcodeDetector({ 
-            formats: ['code_128', 'code_39', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'itf', 'codabar'] 
-          })
-
-          // Fast detection every 150ms
-          intervalId = setInterval(async () => {
-            if (!showCameraScanner || !videoRef.current) return
-            try {
-              const barcodes = await detector.detect(videoRef.current)
-              if (barcodes.length > 0) {
-                const barcodeText = barcodes[0].rawValue.trim().toLowerCase()
-                const product = data.find(row => 
-                  String(row['BARCODE'] || '').trim().toLowerCase() === barcodeText
-                )
-                if (product) {
-                  setScannedCart(prev => [...prev, { id: Date.now() + Math.random(), product }])
-                }
-                setShowCameraScanner(false)
-                clearInterval(intervalId)
-              }
-            } catch (e) {
-              // Ignore detection errors
-            }
-          }, 150)
-        } else {
-          alert('Barcode scanner not supported on this browser!')
-          setShowCameraScanner(false)
-        }
+        scan()
       } catch (err) {
         console.error('Camera error:', err)
+        alert('Failed to start camera!')
+        setShowCameraScanner(false)
       }
     }
 
     startScanning()
 
     return () => {
-      if (intervalId) clearInterval(intervalId)
-      if (html5QrCodeRef.current) {
-        html5QrCodeRef.current.stop().catch(console.error)
+      if (animationFrameId) cancelAnimationFrame(animationFrameId)
+      if (codeReaderRef.current) {
+        codeReaderRef.current.reset()
       }
       if (stream) {
         stream.getTracks().forEach(track => track.stop())
