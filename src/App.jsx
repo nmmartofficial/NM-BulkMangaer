@@ -2,6 +2,18 @@ import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from './supabaseClient'
 
+// Custom CSS for scan line animation
+const scanLineAnimation = `
+  @keyframes scan {
+    0% { top: 0; }
+    50% { top: 100%; }
+    100% { top: 0; }
+  }
+  .animate-scan {
+    animation: scan 2s linear infinite;
+  }
+`
+
 function App() {
   // App Mode
   const [appMode, setAppMode] = useState('loading') // loading, login, admin, user
@@ -818,6 +830,9 @@ function App() {
         </div>
       )}
 
+      {/* Custom styles */}
+      <style dangerouslySetInnerHTML={{ __html: scanLineAnimation }} />
+
       <div className="max-w-full mx-auto px-1">
         <div className="flex flex-wrap justify-between items-center mb-6 gap-3">
           <div className="text-center md:text-left">
@@ -965,25 +980,29 @@ function App() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">🔍 Scan Barcode</label>
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <input
-                        type="text"
-                        value={barcodeSearch}
-                        onChange={(e) => { setBarcodeSearch(e.target.value); setSelectedRows(new Set()); setCurrentPage(1); }}
-                        onKeyDown={handleBarcodeScan}
-                        placeholder="Scan barcode..."
-                        autoFocus
-                        className="w-full pl-8 pr-3 py-1.5 border-2 border-indigo-400 rounded-md text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-indigo-50"
-                      />
-                      <div className="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none">
-                        <svg className="h-4 w-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h4M4 20h4m0-8V4m0 4H4" />
-                        </svg>
-                      </div>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={barcodeSearch}
+                      onChange={(e) => { setBarcodeSearch(e.target.value); setSelectedRows(new Set()); setCurrentPage(1); }}
+                      onKeyDown={handleBarcodeScan}
+                      placeholder="Scan or type barcode..."
+                      autoFocus
+                      className="w-full pl-8 pr-12 py-2 border-2 border-indigo-400 rounded-md text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-indigo-50"
+                    />
+                    <div className="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none">
+                      <svg className="h-4 w-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h4M4 20h4m0-8V4m0 4H4" />
+                      </svg>
                     </div>
-                    <button onClick={() => setShowCameraScanner(true)} className="px-4 py-1.5 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-md hover:shadow-lg" title="Camera">
-                      📷
+                    <button 
+                      onClick={() => setShowCameraScanner(true)} 
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-indigo-600 hover:text-indigo-800"
+                      title="Open Camera"
+                    >
+                      <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4c-1.333 0-2.4.667-3.2 2-1.066 1.6-1.6 3.267-1.6 5 0 2.267.933 4.267 2.8 6 1.866 1.733 3.733 2.6 5.6 2.6 1.867 0 3.733-.867 5.6-2.6 1.867-1.733 2.8-3.733 2.8-6 0-1.733-.533-3.4-1.6-5-.8-1.333-1.867-2-3.2-2h-2.4zM12 15a3 3 0 100-6 3 3 0 000 6z" />
+                      </svg>
                     </button>
                   </div>
                 </div>
@@ -1125,18 +1144,46 @@ function App() {
       </div>
 
       {showCameraScanner && (
-        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
-            <div className="flex justify-between items-center p-4 border-b">
-              <h3 className="text-lg font-bold text-gray-800">📷 Scan Barcode</h3>
-              <button onClick={() => setShowCameraScanner(false)} className="text-gray-500 hover:text-gray-700 text-xl">✕</button>
-            </div>
-            <div className="p-4">
-              <div className="relative rounded-lg overflow-hidden border-4 border-indigo-500" style={{ aspectRatio: '1/1', maxHeight: '250px' }}>
-                <video ref={videoRef} className="w-full h-full object-cover" playsInline />
-                <div className="absolute inset-0 border-4 border-dashed border-white/50 pointer-events-none"></div>
+        <div className="fixed inset-0 z-50 flex flex-col bg-black">
+          <div className="relative z-10 flex items-center justify-between p-4">
+            <button 
+              onClick={() => setShowCameraScanner(false)} 
+              className="p-2 bg-white/20 rounded-full text-white"
+            >
+              <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              </svg>
+            </button>
+            <h2 className="text-white text-lg font-bold">Scan to Search Products</h2>
+            <div className="w-10"></div>
+          </div>
+          
+          <div className="flex-1 relative">
+            <video ref={videoRef} className="w-full h-full object-cover" playsInline />
+            
+            {/* Dark overlay except center box */}
+            <div className="absolute inset-0 pointer-events-none">
+              <div className="absolute inset-0 bg-black/60"></div>
+              
+              {/* Center transparent scan box */}
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="relative">
+                  <div className="w-72 h-52 border-4 border-white rounded-xl shadow-2xl"></div>
+                  
+                  {/* Corner brackets */}
+                  <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-indigo-500 rounded-tl-xl"></div>
+                  <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-indigo-500 rounded-tr-xl"></div>
+                  <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-indigo-500 rounded-bl-xl"></div>
+                  <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-indigo-500 rounded-br-xl"></div>
+                  
+                  {/* Scan line animation */}
+                  <div className="absolute inset-x-0 h-1 bg-gradient-to-b from-transparent via-indigo-500 to-transparent animate-scan" style={{ top: '0' }}></div>
+                </div>
               </div>
-              <p className="text-center text-sm text-gray-500 mt-3">Point camera at barcode inside the box</p>
+            </div>
+            
+            <div className="absolute bottom-10 left-0 right-0 text-center">
+              <p className="text-white text-lg font-medium drop-shadow-lg">Scan item barcode to find products</p>
             </div>
           </div>
         </div>
