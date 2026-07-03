@@ -339,11 +339,23 @@ function App() {
 
         setRawUploadedData(jsonData)
 
-        // Clean data
+        // Clean data with flexible column mapping
         const cleanedData = jsonData.map((row, index) => {
           const cleanRow = { _id: index }
+          
+          // Create a lowercase map of the row for flexible matching
+          const lowerRow = {}
+          Object.keys(row).forEach(key => {
+            lowerRow[key.toLowerCase().trim()] = row[key]
+          })
+          
           EXACT_COLUMNS.forEach(targetCol => {
-            cleanRow[targetCol] = row[targetCol] ?? ''
+            // Try exact match first, then lowercase match
+            let val = row[targetCol]
+            if (val === undefined) {
+              val = lowerRow[targetCol.toLowerCase()]
+            }
+            cleanRow[targetCol] = val ?? ''
           })
           return cleanRow
         })
@@ -363,7 +375,7 @@ function App() {
   const uniqueBrands = useMemo(() => {
     const brands = new Set()
     data.forEach(row => {
-      const val = String(row['Brand name'] || '').trim()
+      const val = String(row['Brand name'] || row['BRAND NAME'] || '').trim()
       if (val) brands.add(val)
     })
     return Array.from(brands).sort()
@@ -372,7 +384,7 @@ function App() {
   const uniqueMainCategories = useMemo(() => {
     const cats = new Set()
     data.forEach(row => {
-      const val = String(row['MAIN CATEGORY'] || '').trim()
+      const val = String(row['MAIN CATEGORY'] || row['Main Category'] || row['MAIN CATOGRY'] || '').trim()
       if (val) cats.add(val)
     })
     return Array.from(cats).sort()
@@ -381,7 +393,7 @@ function App() {
   const uniqueSubCategories = useMemo(() => {
     const cats = new Set()
     data.forEach(row => {
-      const val = String(row['SUB CATEGORY'] || '').trim()
+      const val = String(row['SUB CATEGORY'] || row['Sub Category'] || row['SUB CATOGRY'] || '').trim()
       if (val) cats.add(val)
     })
     return Array.from(cats).sort()
@@ -391,21 +403,22 @@ function App() {
   const filteredData = useMemo(() => {
     return data.filter(row => {
       const matchesBrand = selectedBrand 
-        ? String(row['Brand name'] || '').trim() === selectedBrand 
+        ? String(row['Brand name'] || row['BRAND NAME'] || '').trim() === selectedBrand 
         : true
       const matchesMainCat = selectedMainCategory 
-        ? String(row['MAIN CATEGORY'] || '').trim() === selectedMainCategory 
+        ? String(row['MAIN CATEGORY'] || row['Main Category'] || '').trim() === selectedMainCategory 
         : true
       const matchesSubCat = selectedSubCategory 
-        ? String(row['SUB CATEGORY'] || '').trim() === selectedSubCategory 
+        ? String(row['SUB CATEGORY'] || row['Sub Category'] || '').trim() === selectedSubCategory 
         : true
-      const matchesSearch = searchTerm 
-        ? (row['Item Name'] || '').toLowerCase().includes(searchTerm.toLowerCase()) 
-        : true
-      const matchesBarcode = barcodeSearch 
-        ? String(row['BARCODE'] || '').trim().toLowerCase() === String(barcodeSearch).trim().toLowerCase() 
-        : true
-      return matchesBrand && matchesMainCat && matchesSubCat && matchesSearch && matchesBarcode
+      
+      // Search across all columns
+      const searchLower = (searchTerm || barcodeSearch || '').toLowerCase().trim()
+      const matchesSearch = !searchLower || Object.values(row).some(val => 
+        String(val || '').toLowerCase().includes(searchLower)
+      )
+
+      return matchesBrand && matchesMainCat && matchesSubCat && matchesSearch
     })
   }, [data, selectedBrand, selectedMainCategory, selectedSubCategory, searchTerm, barcodeSearch])
 
@@ -990,38 +1003,27 @@ function App() {
                     {uniqueSubCategories.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Search Item</label>
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">🔍 Search / Scan / Type Barcode</label>
                   <div className="relative">
                     <input
                       type="text"
-                      value={searchTerm}
-                      onChange={(e) => { setSearchTerm(e.target.value); setSelectedRows(new Set()); setCurrentPage(1); }}
-                      placeholder="Search..."
-                      className="w-full pl-8 pr-3 py-1.5 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                    />
-                    <div className="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none">
-                      <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                      </svg>
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">🔍 Scan Barcode</label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={barcodeSearch}
-                      onChange={(e) => { setBarcodeSearch(e.target.value); setSelectedRows(new Set()); setCurrentPage(1); }}
+                      value={searchTerm || barcodeSearch}
+                      onChange={(e) => { 
+                        const val = e.target.value
+                        setSearchTerm(val)
+                        setBarcodeSearch(val)
+                        setSelectedRows(new Set())
+                        setCurrentPage(1)
+                      }}
                       onKeyDown={handleBarcodeScan}
-                      placeholder="Scan or type barcode..."
+                      placeholder="Search by name, type barcode, or scan..."
                       autoFocus
                       className="w-full pl-8 pr-12 py-2 border-2 border-indigo-400 rounded-md text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-indigo-50"
                     />
                     <div className="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none">
                       <svg className="h-4 w-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h4M4 20h4m0-8V4m0 4H4" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                       </svg>
                     </div>
                     <button 
