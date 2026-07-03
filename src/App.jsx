@@ -506,19 +506,28 @@ function App() {
 
   useEffect(() => {
     let stream = null
-    let animationId = null
+    let intervalId = null
 
     const startScanning = async () => {
       if (!showCameraScanner) return
 
       try {
         stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: 'environment' } 
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
         })
         if (videoRef.current) {
           videoRef.current.srcObject = stream
           videoRef.current.play()
         }
+
+        // Wait for video to be ready
+        await new Promise(resolve => {
+          if (videoRef.current && videoRef.current.readyState >= 2) {
+            resolve()
+          } else {
+            videoRef.current?.addEventListener('loadedmetadata', resolve, { once: true })
+          }
+        })
 
         // Check if BarcodeDetector is supported
         if ('BarcodeDetector' in window) {
@@ -526,7 +535,8 @@ function App() {
             formats: ['code_128', 'code_39', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'qr_code', 'data_matrix'] 
           })
 
-          const detectFrame = async () => {
+          // Fast detection every 200ms
+          intervalId = setInterval(async () => {
             if (!showCameraScanner || !videoRef.current) return
             try {
               const barcodes = await detector.detect(videoRef.current)
@@ -539,14 +549,12 @@ function App() {
                   setScannedCart(prev => [...prev, { id: Date.now() + Math.random(), product }])
                 }
                 setShowCameraScanner(false)
-                return
+                clearInterval(intervalId)
               }
             } catch (e) {
               // Ignore detection errors
             }
-            animationId = requestAnimationFrame(detectFrame)
-          }
-          detectFrame()
+          }, 200)
         }
       } catch (err) {
         console.error('Camera error:', err)
@@ -556,7 +564,7 @@ function App() {
     startScanning()
 
     return () => {
-      if (animationId) cancelAnimationFrame(animationId)
+      if (intervalId) clearInterval(intervalId)
       if (stream) {
         stream.getTracks().forEach(track => track.stop())
       }
@@ -1118,14 +1126,17 @@ function App() {
 
       {showCameraScanner && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
             <div className="flex justify-between items-center p-4 border-b">
               <h3 className="text-lg font-bold text-gray-800">📷 Scan Barcode</h3>
               <button onClick={() => setShowCameraScanner(false)} className="text-gray-500 hover:text-gray-700 text-xl">✕</button>
             </div>
             <div className="p-4">
-              <video ref={videoRef} className="w-full rounded-lg" playsInline />
-              <p className="text-center text-sm text-gray-500 mt-2">Point camera at barcode</p>
+              <div className="relative rounded-lg overflow-hidden border-4 border-indigo-500" style={{ aspectRatio: '1/1', maxHeight: '250px' }}>
+                <video ref={videoRef} className="w-full h-full object-cover" playsInline />
+                <div className="absolute inset-0 border-4 border-dashed border-white/50 pointer-events-none"></div>
+              </div>
+              <p className="text-center text-sm text-gray-500 mt-3">Point camera at barcode inside the box</p>
             </div>
           </div>
         </div>
