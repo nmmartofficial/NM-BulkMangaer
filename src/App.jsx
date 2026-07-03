@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from './supabaseClient'
 
@@ -30,6 +30,7 @@ function App() {
   const [showSuccessToast, setShowSuccessToast] = useState(false)
   const [bulkReplaceSuccess, setBulkReplaceSuccess] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
+  const [showCameraScanner, setShowCameraScanner] = useState(false)
   const [dataLoadedFromSupabase, setDataLoadedFromSupabase] = useState(false)
 
   // Login Form State
@@ -501,6 +502,67 @@ function App() {
     ))
   }, [])
 
+  const videoRef = useRef(null)
+
+  useEffect(() => {
+    let stream = null
+    let animationId = null
+
+    const startScanning = async () => {
+      if (!showCameraScanner) return
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { facingMode: 'environment' } 
+        })
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+          videoRef.current.play()
+        }
+
+        // Check if BarcodeDetector is supported
+        if ('BarcodeDetector' in window) {
+          const detector = new BarcodeDetector({ 
+            formats: ['code_128', 'code_39', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'qr_code', 'data_matrix'] 
+          })
+
+          const detectFrame = async () => {
+            if (!showCameraScanner || !videoRef.current) return
+            try {
+              const barcodes = await detector.detect(videoRef.current)
+              if (barcodes.length > 0) {
+                const barcodeText = barcodes[0].rawValue.trim().toLowerCase()
+                const product = data.find(row => 
+                  String(row['BARCODE'] || '').trim().toLowerCase() === barcodeText
+                )
+                if (product) {
+                  setScannedCart(prev => [...prev, { id: Date.now() + Math.random(), product }])
+                }
+                setShowCameraScanner(false)
+                return
+              }
+            } catch (e) {
+              // Ignore detection errors
+            }
+            animationId = requestAnimationFrame(detectFrame)
+          }
+          detectFrame()
+        }
+      } catch (err) {
+        console.error('Camera error:', err)
+      }
+    }
+
+    startScanning()
+
+    return () => {
+      if (animationId) cancelAnimationFrame(animationId)
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop())
+      }
+    }
+  }, [showCameraScanner, data])
+
   // Logout
   const handleLogout = () => {
     setCurrentUser(null)
@@ -895,21 +957,26 @@ function App() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">🔍 Scan Barcode</label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={barcodeSearch}
-                      onChange={(e) => { setBarcodeSearch(e.target.value); setSelectedRows(new Set()); setCurrentPage(1); }}
-                      onKeyDown={handleBarcodeScan}
-                      placeholder="Scan barcode..."
-                      autoFocus
-                      className="w-full pl-8 pr-3 py-1.5 border-2 border-indigo-400 rounded-md text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-indigo-50"
-                    />
-                    <div className="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none">
-                      <svg className="h-4 w-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h4M4 20h4m0-8V4m0 4H4" />
-                      </svg>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <input
+                        type="text"
+                        value={barcodeSearch}
+                        onChange={(e) => { setBarcodeSearch(e.target.value); setSelectedRows(new Set()); setCurrentPage(1); }}
+                        onKeyDown={handleBarcodeScan}
+                        placeholder="Scan barcode..."
+                        autoFocus
+                        className="w-full pl-8 pr-3 py-1.5 border-2 border-indigo-400 rounded-md text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-indigo-50"
+                      />
+                      <div className="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none">
+                        <svg className="h-4 w-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h4M4 20h4m0-8V4m0 4H4" />
+                        </svg>
+                      </div>
                     </div>
+                    <button onClick={() => setShowCameraScanner(true)} className="px-4 py-1.5 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-md hover:shadow-lg" title="Camera">
+                      📷
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1048,6 +1115,21 @@ function App() {
           </>
         )}
       </div>
+
+      {showCameraScanner && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden">
+            <div className="flex justify-between items-center p-4 border-b">
+              <h3 className="text-lg font-bold text-gray-800">📷 Scan Barcode</h3>
+              <button onClick={() => setShowCameraScanner(false)} className="text-gray-500 hover:text-gray-700 text-xl">✕</button>
+            </div>
+            <div className="p-4">
+              <video ref={videoRef} className="w-full rounded-lg" playsInline />
+              <p className="text-center text-sm text-gray-500 mt-2">Point camera at barcode</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
