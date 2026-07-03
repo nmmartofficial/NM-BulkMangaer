@@ -522,7 +522,7 @@ function App() {
     // Load ZXing library from CDN
     if (!scriptLoadedRef.current) {
       const script = document.createElement('script')
-      script.src = 'https://unpkg.com/@zxing/library@latest'
+      script.src = 'https://unpkg.com/@zxing/library@0.21.3'
       script.onload = () => {
         scriptLoadedRef.current = true
       }
@@ -536,22 +536,16 @@ function App() {
       if (!showCameraScanner) return
 
       try {
-        // Wait for ZXing library to load
-        while (!window.ZXing && !window.BrowserMultiFormatReader) {
+        // Wait for ZXing library to load - up to 5 seconds
+        let waitCount = 0
+        while (!window.ZXing && waitCount < 50) {
           await new Promise(resolve => setTimeout(resolve, 100))
+          waitCount++
         }
 
-        const BrowserMultiFormatReader = window.BrowserMultiFormatReader || (window.ZXing && window.ZXing.BrowserMultiFormatReader)
-        if (!BrowserMultiFormatReader) {
-          alert('Barcode scanner library failed to load!')
-          setShowCameraScanner(false)
-          return
-        }
-
-        // Initialize ZXing reader
-        codeReaderRef.current = new BrowserMultiFormatReader()
+        const BrowserMultiFormatReader = (window.ZXing && window.ZXing.BrowserMultiFormatReader) || window.BrowserMultiFormatReader
         
-        // Start camera
+        // Start camera first (always works)
         stream = await navigator.mediaDevices.getUserMedia({ 
           video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
         })
@@ -570,35 +564,38 @@ function App() {
           })
         }
 
-        // Start continuous scanning
-        const scan = async () => {
-          if (!showCameraScanner || !videoRef.current) return
+        // If ZXing is available, use it for scanning
+        if (BrowserMultiFormatReader) {
+          codeReaderRef.current = new BrowserMultiFormatReader()
           
-          try {
-            const result = await codeReaderRef.current.decodeFromVideoElement(videoRef.current)
-            if (result) {
-              const barcodeText = result.text.trim().toLowerCase()
-              const product = data.find(row => 
-                String(row['BARCODE'] || '').trim().toLowerCase() === barcodeText
-              )
-              if (product) {
-                setScannedCart(prev => [...prev, { id: Date.now() + Math.random(), product }])
+          // Start continuous scanning
+          const scan = async () => {
+            if (!showCameraScanner || !videoRef.current) return
+            
+            try {
+              const result = await codeReaderRef.current.decodeFromVideoElement(videoRef.current)
+              if (result) {
+                const barcodeText = result.text.trim().toLowerCase()
+                const product = data.find(row => 
+                  String(row['BARCODE'] || '').trim().toLowerCase() === barcodeText
+                )
+                if (product) {
+                  setScannedCart(prev => [...prev, { id: Date.now() + Math.random(), product }])
+                }
+                setShowCameraScanner(false)
+                return
               }
-              setShowCameraScanner(false)
-              return
+            } catch (err) {
+              // Ignore continuous scan errors
             }
-          } catch (err) {
-            // Ignore continuous scan errors
+            
+            animationFrameId = requestAnimationFrame(scan)
           }
           
-          animationFrameId = requestAnimationFrame(scan)
+          scan()
         }
-        
-        scan()
       } catch (err) {
         console.error('Camera error:', err)
-        alert('Failed to start camera!')
-        setShowCameraScanner(false)
       }
     }
 
@@ -607,7 +604,7 @@ function App() {
     return () => {
       if (animationFrameId) cancelAnimationFrame(animationFrameId)
       if (codeReaderRef.current) {
-        codeReaderRef.current.reset()
+        try { codeReaderRef.current.reset() } catch (e) {}
       }
       if (stream) {
         stream.getTracks().forEach(track => track.stop())
@@ -1049,29 +1046,30 @@ function App() {
                     Clear All
                   </button>
                 </div>
-                <div className="bg-white rounded-lg overflow-x-auto">
-                  <table className="w-full text-gray-900">
-                    <thead className="bg-gray-100">
-                      <tr>
-                        {EXACT_COLUMNS.map(col => <th key={col} className="px-2 py-2 text-xs font-semibold text-gray-700 uppercase text-left">{col}</th>)}
-                        <th className="px-2 py-2 text-xs font-semibold text-gray-700 uppercase text-center">Del</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200">
-                      {scannedCart.map(item => (
-                        <tr key={item.id} className="hover:bg-gray-50">
-                          {EXACT_COLUMNS.map(col => (
-                            <td key={col} className="px-2 py-2">
-                              <input type="text" value={item.product[col] || ''} onChange={(e) => handleScannedItemEdit(item.id, col, e.target.value)} className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 outline-none" />
-                            </td>
-                          ))}
-                          <td className="px-2 py-2 text-center">
-                            <button onClick={() => removeFromCart(item.id)} className="px-3 py-1 bg-red-500 text-white text-xs font-medium rounded hover:bg-red-600">✕</button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="grid grid-cols-1 gap-3">
+                  {scannedCart.map(item => (
+                    <div key={item.id} className="bg-white rounded-lg p-3 text-gray-900 relative">
+                      <button 
+                        onClick={() => removeFromCart(item.id)} 
+                        className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center bg-red-500 text-white rounded-full text-sm hover:bg-red-600 z-10"
+                      >
+                        ✕
+                      </button>
+                      <div className="space-y-2">
+                        {EXACT_COLUMNS.slice(0, 5).map(col => (
+                          <div key={col} className="grid grid-cols-3 gap-2 items-center">
+                            <span className="text-xs font-semibold text-gray-600 truncate">{col}:</span>
+                            <input 
+                              type="text" 
+                              value={item.product[col] || ''} 
+                              onChange={(e) => handleScannedItemEdit(item.id, col, e.target.value)} 
+                              className="col-span-2 px-2 py-1 text-xs border border-gray-300 rounded focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 outline-none"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
