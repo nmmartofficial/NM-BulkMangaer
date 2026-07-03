@@ -5,12 +5,12 @@ import { supabase } from './supabaseClient'
 // Custom CSS for scan line animation
 const scanLineAnimation = `
   @keyframes scan {
-    0% { top: 0; }
-    50% { top: 100%; }
-    100% { top: 0; }
+    0% { transform: translateY(0); }
+    50% { transform: translateY(240px); }
+    100% { transform: translateY(0); }
   }
   .animate-scan {
-    animation: scan 2s linear infinite;
+    animation: scan 2s ease-in-out infinite;
   }
 `
 
@@ -515,6 +515,7 @@ function App() {
   }, [])
 
   const videoRef = useRef(null)
+  const html5QrCodeRef = useRef(null)
 
   useEffect(() => {
     let stream = null
@@ -524,8 +525,39 @@ function App() {
       if (!showCameraScanner) return
 
       try {
+        // Use html5-qrcode if available (from CDN)
+        if (window.Html5QrcodeScanner || window.Html5Qrcode) {
+          const Html5Qrcode = window.Html5Qrcode
+          html5QrCodeRef.current = new Html5Qrcode(videoRef.current, {
+            fps: 10,
+            qrbox: { width: 250, height: 250 },
+            aspectRatio: 1.0
+          })
+          
+          await html5QrCodeRef.current.start(
+            { facingMode: "environment" },
+            { fps: 10, qrbox: { width: 250, height: 250 } },
+            (decodedText) => {
+              const barcodeText = decodedText.trim().toLowerCase()
+              const product = data.find(row => 
+                String(row['BARCODE'] || '').trim().toLowerCase() === barcodeText
+              )
+              if (product) {
+                setScannedCart(prev => [...prev, { id: Date.now() + Math.random(), product }])
+              }
+              setShowCameraScanner(false)
+              html5QrCodeRef.current?.stop()
+            },
+            (errorMessage) => {
+              // Ignore scan errors
+            }
+          )
+          return
+        }
+        
+        // Fallback to native BarcodeDetector
         stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
+          video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } 
         })
         if (videoRef.current) {
           videoRef.current.srcObject = stream
@@ -544,10 +576,10 @@ function App() {
         // Check if BarcodeDetector is supported
         if ('BarcodeDetector' in window) {
           const detector = new BarcodeDetector({ 
-            formats: ['code_128', 'code_39', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'qr_code', 'data_matrix'] 
+            formats: ['code_128', 'code_39', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'itf', 'codabar'] 
           })
 
-          // Fast detection every 200ms
+          // Fast detection every 150ms
           intervalId = setInterval(async () => {
             if (!showCameraScanner || !videoRef.current) return
             try {
@@ -566,7 +598,10 @@ function App() {
             } catch (e) {
               // Ignore detection errors
             }
-          }, 200)
+          }, 150)
+        } else {
+          alert('Barcode scanner not supported on this browser!')
+          setShowCameraScanner(false)
         }
       } catch (err) {
         console.error('Camera error:', err)
@@ -577,6 +612,9 @@ function App() {
 
     return () => {
       if (intervalId) clearInterval(intervalId)
+      if (html5QrCodeRef.current) {
+        html5QrCodeRef.current.stop().catch(console.error)
+      }
       if (stream) {
         stream.getTracks().forEach(track => track.stop())
       }
@@ -1145,7 +1183,7 @@ function App() {
 
       {showCameraScanner && (
         <div className="fixed inset-0 z-50 flex flex-col bg-black">
-          <div className="relative z-10 flex items-center justify-between p-4">
+          <div className="relative z-10 flex items-center justify-between p-4 bg-black/50">
             <button 
               onClick={() => setShowCameraScanner(false)} 
               className="p-2 bg-white/20 rounded-full text-white"
@@ -1158,32 +1196,32 @@ function App() {
             <div className="w-10"></div>
           </div>
           
-          <div className="flex-1 relative">
-            <video ref={videoRef} className="w-full h-full object-cover" playsInline />
+          <div className="flex-1 relative overflow-hidden">
+            <video ref={videoRef} className="absolute inset-0 w-full h-full object-cover" playsInline />
             
             {/* Dark overlay except center box */}
             <div className="absolute inset-0 pointer-events-none">
               <div className="absolute inset-0 bg-black/60"></div>
               
-              {/* Center transparent scan box */}
+              {/* Center transparent scan box - perfect center */}
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="relative">
-                  <div className="w-72 h-52 border-4 border-white rounded-xl shadow-2xl"></div>
+                  <div className="w-80 h-64 bg-transparent border-4 border-white rounded-2xl shadow-2xl"></div>
                   
                   {/* Corner brackets */}
-                  <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-indigo-500 rounded-tl-xl"></div>
-                  <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-indigo-500 rounded-tr-xl"></div>
-                  <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-indigo-500 rounded-bl-xl"></div>
-                  <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-indigo-500 rounded-br-xl"></div>
+                  <div className="absolute top-0 left-0 w-10 h-10 border-t-4 border-l-4 border-indigo-500 rounded-tl-xl"></div>
+                  <div className="absolute top-0 right-0 w-10 h-10 border-t-4 border-r-4 border-indigo-500 rounded-tr-xl"></div>
+                  <div className="absolute bottom-0 left-0 w-10 h-10 border-b-4 border-l-4 border-indigo-500 rounded-bl-xl"></div>
+                  <div className="absolute bottom-0 right-0 w-10 h-10 border-b-4 border-r-4 border-indigo-500 rounded-br-xl"></div>
                   
                   {/* Scan line animation */}
-                  <div className="absolute inset-x-0 h-1 bg-gradient-to-b from-transparent via-indigo-500 to-transparent animate-scan" style={{ top: '0' }}></div>
+                  <div className="absolute inset-x-4 h-1 bg-gradient-to-b from-transparent via-indigo-500 to-transparent animate-scan"></div>
                 </div>
               </div>
             </div>
             
-            <div className="absolute bottom-10 left-0 right-0 text-center">
-              <p className="text-white text-lg font-medium drop-shadow-lg">Scan item barcode to find products</p>
+            <div className="absolute bottom-8 left-0 right-0 text-center z-10">
+              <p className="text-white text-lg font-medium drop-shadow-lg">Align barcode inside the box to scan</p>
             </div>
           </div>
         </div>
