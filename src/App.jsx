@@ -501,38 +501,6 @@ function App() {
     ))
   }, [])
 
-  const videoRef = useRef(null)
-  const codeReaderRef = useRef(null)
-
-  useEffect(() => {
-    if (showCameraScanner) {
-      codeReaderRef.current = new BrowserMultiFormatReader()
-      const decode = async () => {
-        try {
-          const result = await codeReaderRef.current.decodeOnceFromVideoDevice(undefined, videoRef.current)
-          if (result) {
-            const trimmed = result.text.trim().toLowerCase()
-            const product = data.find(row => 
-              String(row['BARCODE'] || '').trim().toLowerCase() === trimmed
-            )
-            if (product) {
-              setScannedCart(prev => [...prev, { id: Date.now() + Math.random(), product }])
-            }
-            setShowCameraScanner(false)
-          }
-        } catch (err) {
-          console.error(err)
-        }
-      }
-      decode()
-    } else {
-      if (codeReaderRef.current) codeReaderRef.current.reset()
-    }
-    return () => {
-      if (codeReaderRef.current) codeReaderRef.current.reset()
-    }
-  }, [showCameraScanner, data])
-
   // Logout
   const handleLogout = () => {
     setCurrentUser(null)
