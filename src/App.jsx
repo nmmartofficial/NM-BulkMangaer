@@ -22,15 +22,14 @@ function App() {
   const [currentUser, setCurrentUser] = useState(null)
   
   // Data State
+  const [allSheets, setAllSheets] = useState({}) // { sheetName: { columns: [], data: [] } }
+  const [selectedSheet, setSelectedSheet] = useState('')
   const [data, setData] = useState([])
-  const [rawUploadedData, setRawUploadedData] = useState(null)
+  const [columns, setColumns] = useState([])
   const [showDebug, setShowDebug] = useState(false)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [loadingFromSupabase, setLoadingFromSupabase] = useState(false)
-  const [selectedBrand, setSelectedBrand] = useState('')
-  const [selectedMainCategory, setSelectedMainCategory] = useState('')
-  const [selectedSubCategory, setSelectedSubCategory] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
   const [barcodeSearch, setBarcodeSearch] = useState('')
   const [selectedRows, setSelectedRows] = useState(new Set())
@@ -44,6 +43,19 @@ function App() {
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [showCameraScanner, setShowCameraScanner] = useState(false)
   const [dataLoadedFromSupabase, setDataLoadedFromSupabase] = useState(false)
+  
+  // Dynamic Filters State
+  const [dynamicFilters, setDynamicFilters] = useState({})
+
+  // Common column patterns to detect (case-insensitive)
+  const commonColumnPatterns = {
+    'Product Name': ['product', 'item', 'name', 'title'],
+    'Category': ['category', 'cat', 'type'],
+    'Subcategory': ['subcategory', 'subcat', 'sub', 'sub-category'],
+    'Brand': ['brand', 'company', 'make'],
+    'Size': ['size', 'variant', 'model'],
+    'Color': ['color', 'colour']
+  }
 
   // Login Form State
   const [loginName, setLoginName] = useState('')
@@ -56,28 +68,7 @@ function App() {
   const [newUserMobile, setNewUserMobile] = useState('')
   const [loadingUsers, setLoadingUsers] = useState(false)
 
-  // EXACT COLUMNS
-  const EXACT_COLUMNS = [
-    'Item Name',
-    'BARCODE',
-    'HSNCODE',
-    'MAIN CATEGORY',
-    'SUB CATEGORY',
-    'MRP',
-    'SALE RATE',
-    'PURC RATE',
-    'GST%',
-    'CESS%',
-    'OPENING',
-    'Brand name',
-    'Unit',
-    'MinQty',
-    'Dis %',
-    'Basic Sale Price',
-    'Size',
-    'Counter',
-    'Colour'
-  ]
+
 
   // Generate unique token
   const generateToken = () => {
@@ -238,14 +229,46 @@ function App() {
       if (error && error.code !== 'PGRST116') throw error
 
       if (savedData && savedData.inventory_data) {
-        const cleanedData = savedData.inventory_data.map((row, index) => {
-          const cleanRow = { _id: index }
-          EXACT_COLUMNS.forEach(col => {
-            cleanRow[col] = row[col] ?? ''
+        // Check if saved data has sheets structure or is old format
+        if (savedData.inventory_data.allSheets) {
+          setAllSheets(savedData.inventory_data.allSheets)
+          if (savedData.inventory_data.selectedSheet && savedData.inventory_data.allSheets[savedData.inventory_data.selectedSheet]) {
+            setSelectedSheet(savedData.inventory_data.selectedSheet)
+            setColumns(savedData.inventory_data.allSheets[savedData.inventory_data.selectedSheet].columns)
+            setData(savedData.inventory_data.allSheets[savedData.inventory_data.selectedSheet].data)
+          } else if (Object.keys(savedData.inventory_data.allSheets).length > 0) {
+            const firstSheet = Object.keys(savedData.inventory_data.allSheets)[0]
+            setSelectedSheet(firstSheet)
+            setColumns(savedData.inventory_data.allSheets[firstSheet].columns)
+            setData(savedData.inventory_data.allSheets[firstSheet].data)
+          }
+        } else {
+          // Handle old format for backward compatibility
+          const firstSheetName = 'Sheet1'
+          const oldData = savedData.inventory_data
+          // Try to get columns from first row, or use default
+          let cols = []
+          if (oldData.length > 0) {
+            cols = Object.keys(oldData[0]).filter(k => k !== '_id')
+          }
+          const cleanedData = oldData.map((row, index) => {
+            const cleanRow = { _id: index }
+            cols.forEach(col => {
+              cleanRow[col] = row[col] ?? ''
+            })
+            return cleanRow
           })
-          return cleanRow
-        })
-        setData(cleanedData)
+          const sheets = {
+            [firstSheetName]: {
+              columns: cols,
+              data: cleanedData
+            }
+          }
+          setAllSheets(sheets)
+          setSelectedSheet(firstSheetName)
+          setColumns(cols)
+          setData(cleanedData)
+        }
         setDataLoadedFromSupabase(true)
         setTimeout(() => setDataLoadedFromSupabase(false), 4000)
       }
@@ -259,19 +282,25 @@ function App() {
   // Save to Supabase
   const saveToSupabase = async () => {
     if (!currentUser) return
-    if (data.length === 0) {
+    if (Object.keys(allSheets).length === 0) {
       alert('No data to save!')
       return
     }
     setSaving(true)
     try {
-      const dataToSave = data.map(row => {
-        const cleanRow = {}
-        EXACT_COLUMNS.forEach(col => {
-          cleanRow[col] = row[col] ?? ''
-        })
-        return cleanRow
-      })
+      // First, update the current sheet in allSheets with the latest data
+      const updatedAllSheets = {
+        ...allSheets,
+        [selectedSheet]: {
+          columns,
+          data
+        }
+      }
+
+      const dataToSave = {
+        allSheets: updatedAllSheets,
+        selectedSheet
+      }
 
       const { data: existingData, error: fetchError } = await supabase
         .from('nm_mart_inventory')
@@ -301,6 +330,7 @@ function App() {
       }
 
       if (result?.error) throw result.error
+      setAllSheets(updatedAllSheets)
       setSaveSuccess(true)
       setTimeout(() => setSaveSuccess(false), 3000)
     } catch (error) {
@@ -320,47 +350,50 @@ function App() {
     }
 
     setLoading(true)
-    setSelectedBrand('')
-    setSelectedMainCategory('')
-    setSelectedSubCategory('')
     setSearchTerm('')
     setSelectedRows(new Set())
     setBulkColumn('')
     setBulkNewValue('')
+    setAllSheets({})
+    setSelectedSheet('')
+    setData([])
+    setColumns([])
 
     const reader = new FileReader()
     reader.onload = (event) => {
       try {
         const dataArray = new Uint8Array(event.target.result)
         const workbook = XLSX.read(dataArray, { type: 'array' })
-        const sheetName = workbook.SheetNames[0]
-        const worksheet = workbook.Sheets[sheetName]
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: '' })
+        const sheets = {}
 
-        setRawUploadedData(jsonData)
-
-        // Clean data with flexible column mapping
-        const cleanedData = jsonData.map((row, index) => {
-          const cleanRow = { _id: index }
+        workbook.SheetNames.forEach(sheetName => {
+          const worksheet = workbook.Sheets[sheetName]
+          const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: '', header: 1 })
           
-          // Create a lowercase map of the row for flexible matching
-          const lowerRow = {}
-          Object.keys(row).forEach(key => {
-            lowerRow[key.toLowerCase().trim()] = row[key]
-          })
-          
-          EXACT_COLUMNS.forEach(targetCol => {
-            // Try exact match first, then lowercase match
-            let val = row[targetCol]
-            if (val === undefined) {
-              val = lowerRow[targetCol.toLowerCase()]
-            }
-            cleanRow[targetCol] = val ?? ''
-          })
-          return cleanRow
+          if (jsonData.length > 0) {
+            const cols = jsonData[0].map(col => String(col || `Column ${jsonData[0].indexOf(col) + 1}`))
+            const rows = jsonData.slice(1).map((row, index) => {
+              const rowData = { _id: index }
+              cols.forEach((col, colIndex) => {
+                rowData[col] = row[colIndex] ?? ''
+              })
+              return rowData
+            })
+            sheets[sheetName] = { columns: cols, data: rows }
+          }
         })
 
-        setData(cleanedData)
+        setAllSheets(sheets)
+        
+        // Auto select first sheet if available
+        if (workbook.SheetNames.length > 0) {
+          const firstSheet = workbook.SheetNames[0]
+          setSelectedSheet(firstSheet)
+          if (sheets[firstSheet]) {
+            setColumns(sheets[firstSheet].columns)
+            setData(sheets[firstSheet].data)
+          }
+        }
       } catch (error) {
         console.error('Error parsing file:', error)
         alert('Error parsing file!')
@@ -371,56 +404,67 @@ function App() {
     reader.readAsArrayBuffer(file)
   }
 
-  // Unique values
-  const uniqueBrands = useMemo(() => {
-    const brands = new Set()
-    data.forEach(row => {
-      const val = String(row['Brand name'] || row['BRAND NAME'] || '').trim()
-      if (val) brands.add(val)
-    })
-    return Array.from(brands).sort()
-  }, [data])
+  // Sheet selection handler
+  const handleSheetChange = (sheetName) => {
+    setSelectedSheet(sheetName)
+    if (allSheets[sheetName]) {
+      setColumns(allSheets[sheetName].columns)
+      setData(allSheets[sheetName].data)
+    }
+    setSearchTerm('')
+    setBarcodeSearch('')
+    setDynamicFilters({})
+    setSelectedRows(new Set())
+    setCurrentPage(1)
+  }
 
-  const uniqueMainCategories = useMemo(() => {
-    const cats = new Set()
-    data.forEach(row => {
-      const val = String(row['MAIN CATEGORY'] || row['Main Category'] || row['MAIN CATOGRY'] || '').trim()
-      if (val) cats.add(val)
+  // Detect matching columns
+  const detectedColumns = useMemo(() => {
+    const detected = {}
+    columns.forEach(col => {
+      const colLower = col.toLowerCase()
+      for (const [label, patterns] of Object.entries(commonColumnPatterns)) {
+        if (patterns.some(pattern => colLower.includes(pattern.toLowerCase()))) {
+          detected[label] = col
+          break
+        }
+      }
     })
-    return Array.from(cats).sort()
-  }, [data])
+    return detected
+  }, [columns])
 
-  const uniqueSubCategories = useMemo(() => {
-    const cats = new Set()
-    data.forEach(row => {
-      const val = String(row['SUB CATEGORY'] || row['Sub Category'] || row['SUB CATOGRY'] || '').trim()
-      if (val) cats.add(val)
-    })
-    return Array.from(cats).sort()
-  }, [data])
+  // Get unique values for a column (for dropdown)
+  const getUniqueValues = (colName) => {
+    if (!colName) return []
+    const values = [...new Set(data.map(row => String(row[colName] || '')).filter(v => v.trim() !== ''))]
+    return values.sort()
+  }
 
   // Filtered data
   const filteredData = useMemo(() => {
     return data.filter(row => {
-      const matchesBrand = selectedBrand 
-        ? String(row['Brand name'] || row['BRAND NAME'] || '').trim() === selectedBrand 
-        : true
-      const matchesMainCat = selectedMainCategory 
-        ? String(row['MAIN CATEGORY'] || row['Main Category'] || '').trim() === selectedMainCategory 
-        : true
-      const matchesSubCat = selectedSubCategory 
-        ? String(row['SUB CATEGORY'] || row['Sub Category'] || '').trim() === selectedSubCategory 
-        : true
-      
       // Search across all columns
       const searchLower = (searchTerm || barcodeSearch || '').toLowerCase().trim()
       const matchesSearch = !searchLower || Object.values(row).some(val => 
         String(val || '').toLowerCase().includes(searchLower)
       )
+      
+      // Dynamic filters
+      let matchesDynamicFilters = true
+      for (const [label, colName] of Object.entries(detectedColumns)) {
+        const filterValue = dynamicFilters[label]
+        if (filterValue) {
+          const rowValue = String(row[colName] || '').trim()
+          if (rowValue !== filterValue) {
+            matchesDynamicFilters = false
+            break
+          }
+        }
+      }
 
-      return matchesBrand && matchesMainCat && matchesSubCat && matchesSearch
+      return matchesSearch && matchesDynamicFilters
     })
-  }, [data, selectedBrand, selectedMainCategory, selectedSubCategory, searchTerm, barcodeSearch])
+  }, [data, searchTerm, barcodeSearch, detectedColumns, dynamicFilters])
 
   // Pagination
   const totalPages = useMemo(() => Math.ceil(filteredData.length / itemsPerPage), [filteredData])
@@ -472,16 +516,16 @@ function App() {
   const handleExportToExcel = useCallback(() => {
     const exportData = data.map(row => {
       const rowData = {}
-      EXACT_COLUMNS.forEach(col => rowData[col] = row[col])
+      columns.forEach(col => rowData[col] = row[col])
       return rowData
     })
     const ws = XLSX.utils.json_to_sheet(exportData)
     const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Inventory')
-    XLSX.writeFile(wb, 'NM_MART_Complete_Inventory.xlsx')
+    XLSX.utils.book_append_sheet(wb, ws, selectedSheet || 'Sheet1')
+    XLSX.writeFile(wb, `${selectedSheet || 'export'}.xlsx`)
     setShowSuccessToast(true)
     setTimeout(() => setShowSuccessToast(false), 3000)
-  }, [data])
+  }, [data, columns, selectedSheet])
 
   const handleDeleteRow = useCallback((id) => {
     if (!confirm('Delete this product?')) return
@@ -503,8 +547,11 @@ function App() {
     if (e.key === 'Enter' && barcodeSearch.trim()) {
       e.preventDefault()
       const trimmed = barcodeSearch.trim().toLowerCase()
+      // Search in all columns for exact match
       const product = data.find(row => 
-        String(row['BARCODE'] || '').trim().toLowerCase() === trimmed
+        Object.values(row).some(val => 
+          String(val || '').trim().toLowerCase() === trimmed
+        )
       )
       if (product) {
         setScannedCart(prev => [...prev, { id: Date.now() + Math.random(), product }])
@@ -579,31 +626,34 @@ function App() {
 
         // If ZXing is available, use it for scanning
         if (BrowserMultiFormatReader) {
-          codeReaderRef.current = new BrowserMultiFormatReader()
-          
-          // Start continuous scanning
-          const scan = async () => {
-            if (!showCameraScanner || !videoRef.current) return
-            
-            try {
-              const result = await codeReaderRef.current.decodeFromVideoElement(videoRef.current)
-              if (result) {
-                const barcodeText = result.text.trim().toLowerCase()
-                const product = data.find(row => 
-                  String(row['BARCODE'] || '').trim().toLowerCase() === barcodeText
-                )
-                if (product) {
-                  setScannedCart(prev => [...prev, { id: Date.now() + Math.random(), product }])
+              codeReaderRef.current = new BrowserMultiFormatReader()
+              
+              // Start continuous scanning
+              const scan = async () => {
+                if (!showCameraScanner || !videoRef.current) return
+                
+                try {
+                  const result = await codeReaderRef.current.decodeFromVideoElement(videoRef.current)
+                  if (result) {
+                    const barcodeText = result.text.trim().toLowerCase()
+                    // Search in all columns for exact match
+                    const product = data.find(row => 
+                      Object.values(row).some(val => 
+                        String(val || '').trim().toLowerCase() === barcodeText
+                      )
+                    )
+                    if (product) {
+                      setScannedCart(prev => [...prev, { id: Date.now() + Math.random(), product }])
+                    }
+                    setShowCameraScanner(false)
+                    return
+                  }
+                } catch (err) {
+                  // Ignore continuous scan errors
                 }
-                setShowCameraScanner(false)
-                return
+                
+                animationFrameId = requestAnimationFrame(scan)
               }
-            } catch (err) {
-              // Ignore continuous scan errors
-            }
-            
-            animationFrameId = requestAnimationFrame(scan)
-          }
           
           scan()
         }
@@ -625,14 +675,64 @@ function App() {
     }
   }, [showCameraScanner, data])
 
+  // Delete user data from Supabase and clear local state
+  const handleDeleteMyData = async () => {
+    if (!currentUser) return
+    
+    if (!confirm('क्या आप वाकई अपना सारा डेटा हटाना चाहते हैं? यह क्रिया पूर्ववत नहीं की जा सकती!')) {
+      return
+    }
+    
+    setLoading(true)
+    try {
+      // Delete inventory data for this user
+      await supabase
+        .from('nm_mart_inventory')
+        .delete()
+        .eq('user_token', currentUser.unique_token)
+      
+      // Also delete the user record if needed (optional)
+      // await supabase
+      //   .from('users')
+      //   .delete()
+      //   .eq('unique_token', currentUser.unique_token)
+      
+      // Clear local state
+      setData([])
+      setColumns([])
+      setAllSheets({})
+      setSelectedSheet('')
+      setScannedCart([])
+      setSelectedRows(new Set())
+      setSearchTerm('')
+      setBarcodeSearch('')
+      setCurrentPage(1)
+      
+      setSaveSuccess(false)
+      alert('आपका सारा डेटा सफलतापूर्वक हटा दिया गया!')
+    } catch (error) {
+      console.error('Error deleting data:', error)
+      alert('डेटा हटाते समय त्रुटि हुई!')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // Logout
   const handleLogout = () => {
     setCurrentUser(null)
-    localStorage.removeItem('userToken')
+    localStorage.clear() // Clear everything from localStorage
     window.history.replaceState({}, '', window.location.pathname)
     setAppMode('login')
     setData([])
+    setColumns([])
+    setAllSheets({})
+    setSelectedSheet('')
     setScannedCart([])
+    setSelectedRows(new Set())
+    setSearchTerm('')
+    setBarcodeSearch('')
+    setCurrentPage(1)
   }
 
   // --- RENDER ---
@@ -916,6 +1016,11 @@ function App() {
             >
               Logout
             </button>
+            <button onClick={handleDeleteMyData}
+              className="flex items-center gap-2 px-5 py-2 bg-gradient-to-r from-orange-500 to-red-600 text-white font-semibold rounded-lg shadow hover:shadow-md"
+            >
+              🗑️ Delete My Data
+            </button>
           </div>
         </div>
 
@@ -945,6 +1050,26 @@ function App() {
           )}
         </div>
 
+        {/* Sheet Selection Dropdown */}
+        {Object.keys(allSheets).length > 0 && (
+          <div className="bg-white rounded-xl shadow-xl p-4 mb-4">
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium text-gray-700">📋 Select Sheet:</label>
+              <select
+                value={selectedSheet}
+                onChange={(e) => handleSheetChange(e.target.value)}
+                className="flex-1 max-w-xs px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+              >
+                {Object.keys(allSheets).map(sheetName => (
+                  <option key={sheetName} value={sheetName}>
+                    {sheetName}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
+
         {data.length > 0 && (
           <>
             <div className="bg-white rounded-xl shadow-xl p-4 mb-4">
@@ -955,56 +1080,21 @@ function App() {
                     Showing {filteredData.length} of {data.length}
                   </div>
                   <button onClick={() => {
-                    setSelectedBrand('')
-                    setSelectedMainCategory('')
-                    setSelectedSubCategory('')
                     setSearchTerm('')
                     setBarcodeSearch('')
                     setSelectedRows(new Set())
                     setCurrentPage(1)
                     setScannedCart([])
+                    setDynamicFilters({})
                   }} className="px-3 py-1 bg-gray-200 text-gray-700 text-sm font-medium rounded hover:bg-gray-300">
                     Clear Filters
                   </button>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+              <div className="grid grid-cols-1 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Filter by Brand</label>
-                  <select
-                    value={selectedBrand}
-                    onChange={(e) => { setSelectedBrand(e.target.value); setSelectedRows(new Set()); setCurrentPage(1); }}
-                    className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                  >
-                    <option value="">All Brands</option>
-                    {uniqueBrands.map(b => <option key={b} value={b}>{b}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Filter by Category</label>
-                  <select
-                    value={selectedMainCategory}
-                    onChange={(e) => { setSelectedMainCategory(e.target.value); setSelectedRows(new Set()); setCurrentPage(1); }}
-                    className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                  >
-                    <option value="">All Categories</option>
-                    {uniqueMainCategories.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Filter by Sub-Category</label>
-                  <select
-                    value={selectedSubCategory}
-                    onChange={(e) => { setSelectedSubCategory(e.target.value); setSelectedRows(new Set()); setCurrentPage(1); }}
-                    className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                  >
-                    <option value="">All Sub-Categories</option>
-                    {uniqueSubCategories.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-                <div className="md:col-span-2">
-                  <label className="block text-xs font-medium text-gray-700 mb-1">🔍 Search / Scan / Type Barcode</label>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">🔍 Search / Scan / Type</label>
                   <div className="relative">
                     <input
                       type="text"
@@ -1017,7 +1107,7 @@ function App() {
                         setCurrentPage(1)
                       }}
                       onKeyDown={handleBarcodeScan}
-                      placeholder="Search by name, type barcode, or scan..."
+                      placeholder="Search across all columns..."
                       autoFocus
                       className="w-full pl-8 pr-12 py-2 border-2 border-indigo-400 rounded-md text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-indigo-50"
                     />
@@ -1037,6 +1127,36 @@ function App() {
                     </button>
                   </div>
                 </div>
+                
+                {/* Dynamic Filters */}
+                {Object.keys(detectedColumns).length > 0 && (
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 pt-3 border-t border-gray-200">
+                    {Object.entries(detectedColumns).map(([label, colName]) => {
+                      const uniqueValues = getUniqueValues(colName)
+                      if (uniqueValues.length === 0) return null
+                      
+                      return (
+                        <div key={label}>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">🎯 {label}</label>
+                          <select
+                            value={dynamicFilters[label] || ''}
+                            onChange={(e) => {
+                              setDynamicFilters(prev => ({ ...prev, [label]: e.target.value }))
+                              setSelectedRows(new Set())
+                              setCurrentPage(1)
+                            }}
+                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                          >
+                            <option value="">All {label}s</option>
+                            {uniqueValues.map(val => (
+                              <option key={val} value={val}>{val}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1058,7 +1178,7 @@ function App() {
                         ✕
                       </button>
                       <div className="space-y-2">
-                        {EXACT_COLUMNS.slice(0, 5).map(col => (
+                        {columns.slice(0, 5).map(col => (
                           <div key={col} className="grid grid-cols-3 gap-2 items-center">
                             <span className="text-xs font-semibold text-gray-600 truncate">{col}:</span>
                             <input 
@@ -1095,7 +1215,7 @@ function App() {
                       className="w-full px-3 py-2 rounded-md bg-white text-gray-900 focus:ring-2 focus:ring-white outline-none text-sm"
                     >
                       <option value="">-- Choose --</option>
-                      {EXACT_COLUMNS.map(c => <option key={c} value={c}>{c}</option>)}
+                      {columns.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
                   <div className="flex-1 min-w-[180px]">
@@ -1122,7 +1242,7 @@ function App() {
                       <th className="px-1 py-1 w-10 text-center">
                         <input type="checkbox" checked={filteredData.length > 0 && selectedRows.size === filteredData.length} onChange={toggleSelectAll} className="w-3.5 h-3.5 text-indigo-600 rounded focus:ring-indigo-500 mx-auto" />
                       </th>
-                      {EXACT_COLUMNS.map(col => <th key={col} className={`px-2 py-2 text-xs font-semibold text-gray-600 uppercase text-left ${col === 'Item Name' ? 'min-w-[250px]' : ''}`} title={col}>{col}</th>)}
+                      {columns.map(col => <th key={col} className="px-2 py-2 text-xs font-semibold text-gray-600 uppercase text-left min-w-[150px]" title={col}>{col}</th>)}
                       <th className="px-2 py-2 text-xs font-semibold text-gray-600 uppercase text-center">Del</th>
                     </tr>
                   </thead>
@@ -1133,8 +1253,8 @@ function App() {
                           <td className="px-2 py-2 text-center">
                             <input type="checkbox" checked={selectedRows.has(row._id)} onChange={() => toggleSelectRow(row._id)} className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 mx-auto" />
                           </td>
-                          {EXACT_COLUMNS.map(col => (
-                            <td key={col} className={`px-2 py-2 ${col === 'Item Name' ? 'min-w-[250px]' : ''}`}>
+                          {columns.map(col => (
+                            <td key={col} className="px-2 py-2">
                               <input type="text" value={row[col] || ''} onChange={(e) => handleCellEdit(row._id, col, e.target.value)} className="w-full px-2 py-1 text-sm border border-transparent rounded focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none hover:border-gray-300 bg-transparent" />
                             </td>
                           ))}
@@ -1145,7 +1265,7 @@ function App() {
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={EXACT_COLUMNS.length + 2} className="px-6 py-10 text-center text-gray-500">
+                        <td colSpan={columns.length + 2} className="px-6 py-10 text-center text-gray-500">
                           <svg className="mx-auto h-10 w-10 text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                           </svg>
